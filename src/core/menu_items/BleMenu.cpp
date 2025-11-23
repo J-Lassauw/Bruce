@@ -5,6 +5,7 @@
 #include "modules/ble/ble_common.h"
 #include "modules/ble/ble_ninebot.h"
 #include "modules/ble/ble_spam.h"
+#include "modules/ble/ble_wof.h"
 #include <globals.h>
 
 void BleMenu::optionsMenu() {
@@ -35,6 +36,7 @@ void BleMenu::optionsMenu() {
     options.push_back({"Spam All", lambdaHelper(aj_adv, 5)});
     options.push_back({"Spam Custom", lambdaHelper(aj_adv, 6)});
     options.push_back({"Ninebot", [=]() { BLENinebot(); }});
+    options.push_back({"Wall of Flipper", [=]() { BLEWallOfFlipper(); }});
     addOptionToMainMenu();
 
     loopOptions(options, MENU_TYPE_SUBMENU, "Bluetooth");
