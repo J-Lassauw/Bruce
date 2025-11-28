@@ -122,8 +122,10 @@ void BLEWallOfFlipper::redrawMainBorder() {
 }
 
 void BLEWallOfFlipper::loop() {
+    bool loopScan = false;
 
     while (!check(EscPress)) {
+        options.clear();
         redrawMainBorder();
         displayTextLine("Scanning...");
 
@@ -136,11 +138,14 @@ void BLEWallOfFlipper::loop() {
             displayTextLine("No Flipper found. Retry...");
             pBLEScan->clearResults();
             options.clear();
-            continue;
+            if (loopScan) {
+                continue;
+            }
         }
 
         returnToMenu = false;
-        options.push_back({"Scan again", [&](){ returnToMenu = false; }});
+        options.push_back({"Scan Once", [&](){ returnToMenu = false; }});
+        options.push_back({"Scan Continuous", [&](){ loopScan = true; }});
         options.push_back({"Main Menu",  [&](){ returnToMenu = true;  }});
         loopOptions(options);
 
