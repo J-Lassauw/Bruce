@@ -122,7 +122,6 @@ void BLEWallOfFlipper::redrawMainBorder() {
 }
 
 void BLEWallOfFlipper::loop() {
-    std::vector<Option> deviceSelection;
 
     while (!check(EscPress)) {
         redrawMainBorder();
@@ -130,19 +129,20 @@ void BLEWallOfFlipper::loop() {
 
         // Perform a NimBLE-style scan
         NimBLEScanResults results = pBLEScan->start(SCAN_TIME, false);
+        pBLEScan->stop();
         if (check(EscPress)) return;
 
-        if (deviceSelection.empty()) {
+        if (options.empty()) {
             displayTextLine("No Flipper found. Retry...");
             pBLEScan->clearResults();
-            deviceSelection.clear();
+            options.clear();
             continue;
         }
 
         returnToMenu = false;
-        deviceSelection.push_back({"Scan again", [&](){ returnToMenu = false; }});
-        deviceSelection.push_back({"Main Menu",  [&](){ returnToMenu = true;  }});
-        loopOptions(deviceSelection);
+        options.push_back({"Scan again", [&](){ returnToMenu = false; }});
+        options.push_back({"Main Menu",  [&](){ returnToMenu = true;  }});
+        loopOptions(options);
 
         if (returnToMenu) return;
 
