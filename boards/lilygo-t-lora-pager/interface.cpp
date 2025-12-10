@@ -1,4 +1,5 @@
 #include "core/powerSave.h"
+#include "core/utils.h"
 #include <Wire.h>
 #include <bq27220.h>
 #include <globals.h>
@@ -7,11 +8,8 @@
 // Rotary encoder
 #include <RotaryEncoder.h>
 extern RotaryEncoder *encoder;
-IRAM_ATTR void checkPosition();
 RotaryEncoder *encoder = nullptr;
-IRAM_ATTR void checkPosition() {
-    encoder->tick(); // just call tick() to check the state.
-}
+IRAM_ATTR void checkPosition() { encoder->tick(); }
 
 // GPIO expander
 #include <ExtensionIOXL9555.hpp>
@@ -88,7 +86,7 @@ const KeyValue_t _key_value_map[KB_ROWS][KB_COLS] = {
      {'b', 'B', '!'},
      {'n', 'N', ','},
      {'m', 'M', '.'},
-     {SHIFT, SHIFT, CAPS_LOCK},
+     {KEY_SHIFT, KEY_SHIFT, CAPS_LOCK},
      {KEY_BACKSPACE, KEY_BACKSPACE, '#'}},
 
     {{' ', ' ', ' '}}
@@ -110,7 +108,7 @@ int handleSpecialKeys(uint8_t k, bool pressed) {
     char keyVal = _key_value_map[k / 10][k % 10].value_first;
     switch (keyVal) {
         case KEY_FN: fn_key_pressed = !fn_key_pressed; return 1;
-        case KEY_LEFT_SHIFT: {
+        case KEY_SHIFT: {
             shift_key_pressed = pressed;
             if (fn_key_pressed && shift_key_pressed) { caps_lock = !caps_lock; }
             return 1;
@@ -284,7 +282,8 @@ void _setBrightness(uint8_t brightval) {
 **********************************************************************/
 void InputHandler(void) {
     static unsigned long tm = millis();
-    static int _last_dir = 0;
+    static int posDifference = 0;
+    static int lastPos = 0;
     bool sel = !BTN_ACT;
     bool esc = !BTN_ACT;
 
@@ -293,7 +292,12 @@ void InputHandler(void) {
 
     if (millis() - tm < 500) return;
 
-    _last_dir = (int)encoder->getDirection();
+    int newPos = encoder->getPosition();
+    if (newPos != lastPos) {
+        posDifference += (newPos - lastPos);
+        lastPos = newPos;
+    }
+
     sel = digitalRead(SEL_BTN);
     esc = digitalRead(BK_BTN);
 
@@ -328,7 +332,7 @@ void InputHandler(void) {
         }
     } else KeyStroke.Clear();
 
-    if (_last_dir != 0 || sel == BTN_ACT || esc == BTN_ACT || KeyStroke.enter) {
+    if (posDifference != 0 || sel == BTN_ACT || esc == BTN_ACT || KeyStroke.enter) {
         if (!wakeUpScreen()) {
             AnyKeyPress = true;
 
@@ -337,8 +341,14 @@ void InputHandler(void) {
             drv.setWaveform(1, 0);
             drv.run();
 
-            if (_last_dir < 0) PrevPress = true;
-            if (_last_dir > 0) NextPress = true;
+            if (posDifference < 0) {
+                PrevPress = true;
+                posDifference++;
+            }
+            if (posDifference > 0) {
+                NextPress = true;
+                posDifference--;
+            }
             if (sel == BTN_ACT) SelPress = true;
             if (esc == BTN_ACT) EscPress = true;
         } else goto END;
@@ -359,3 +369,61 @@ bool isCharging() { return bq.getIsCharging(); }
 #else
 bool isCharging() { return false; }
 #endif
+
+
+/*********************************************************************
+** Function: _setup_codec_speaker
+** location: modules/others/audio.cpp
+** Handles audio CODEC to enable/disable speaker
+**********************************************************************/
+void _setup_codec_speaker(bool enable) {
+
+    static constexpr const uint8_t enabled_bulk_data[] = {
+        2, 0x00, 0x80, // 0x00 RESET/  CSM POWER ON
+        2, 0x01, 0xB5, // 0x01 CLOCK_MANAGER/ MCLK=BCLK
+        2, 0x02, 0x18, // 0x02 CLOCK_MANAGER/ MULT_PRE=3
+        2, 0x0D, 0x01, // 0x0D SYSTEM/ Power up analog circuitry
+        2, 0x12, 0x00, // 0x12 SYSTEM/ power-up DAC - NOT default
+        2, 0x13, 0x10, // 0x13 SYSTEM/ Enable output to HP drive - NOT default
+        2, 0x32, 0xBF, // 0x32 DAC/ DAC volume (0xBF == ±0 dB )
+        2, 0x37, 0x08, // 0x37 DAC/ Bypass DAC equalizer - NOT default
+        0
+    };
+    static constexpr const uint8_t disabled_bulk_data[] = {0};
+
+    i2c_bulk_write(&Wire, ES8311_ADDR, enable ? enabled_bulk_data : disabled_bulk_data);
+}
+
+/*********************************************************************
+** Function: _setup_codec_mic
+** location: modules/others/mic.cpp
+** Handles audio CODEC to enable/disable microphone
+**********************************************************************/
+void _setup_codec_mic(bool enable) {
+
+    static constexpr const uint8_t enabled_bulk_data[] = {
+        2, 0x00, 0x80, // 0x00 RESET/  CSM POWER ON
+        2, 0x01, 0xBA, // 0x01 CLOCK_MANAGER/ MCLK=BCLK
+        2, 0x02, 0x18, // 0x02 CLOCK_MANAGER/ MULT_PRE=3
+        2, 0x0D, 0x01, // 0x0D SYSTEM/ Power up analog circuitry
+        2, 0x0E, 0x02, // 0x0E SYSTEM/ : Enable analog PGA, enable ADC modulator
+        2, 0x14, 0x10, // ES8311_ADC_REG14 : select Mic1p-Mic1n / PGA GAIN (minimum)
+        2, 0x17, 0xBF, // ES8311_ADC_REG17 : ADC_VOLUME 0xBF == ± 0 dB
+        2, 0x1C, 0x6A, // ES8311_ADC_REG1C : ADC Equalizer bypass, cancel DC offset in digital domain
+        0
+    };
+    static constexpr const uint8_t disabled_bulk_data[] = {
+        2,
+        0x0D,
+        0xFC, // 0x0D SYSTEM/ Power down analog circuitry
+        2,
+        0x0E,
+        0x6A, // 0x0E SYSTEM
+        2,
+        0x00,
+        0x00, // 0x00 RESET/  CSM POWER DOWN
+        0
+    };
+
+    i2c_bulk_write(&Wire, ES8311_ADDR, enable ? enabled_bulk_data : disabled_bulk_data);
+}

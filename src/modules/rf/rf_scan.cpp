@@ -222,26 +222,26 @@ void RFScan::read_raw() {
 }
 
 void RFScan::select_menu_option() {
-#ifndef T_EMBED_1101
+#if !defined(T_EMBED_1101) && !defined(CONFIG_IDF_TARGET_ESP32C5)
     rcswitch.disableReceive(); // it is causing T-Embed to restart
 #endif
 
     options = {};
 
-    if (received.protocol != "") options.emplace_back("Replay", [=]() { set_option(REPLAY); });
+    if (received.protocol != "") options.emplace_back("Replay", [this]() { set_option(REPLAY); });
     if (received.data != "" && received.protocol != "RAW")
-        options.emplace_back("Replay as RAW", [=]() { set_option(REPLAY_RAW); });
+        options.emplace_back("Replay as RAW", [this]() { set_option(REPLAY_RAW); });
 
-    if (received.protocol != "") options.emplace_back("Save Signal", [=]() { set_option(SAVE); });
+    if (received.protocol != "") options.emplace_back("Save Signal", [this]() { set_option(SAVE); });
     if (received.data != "" && received.protocol != "RAW")
-        options.emplace_back("Save as RAW", [=]() { set_option(SAVE_RAW); });
+        options.emplace_back("Save as RAW", [this]() { set_option(SAVE_RAW); });
 
-    if (received.protocol != "") options.emplace_back("Reset Signal", [=]() { set_option(RESET); });
+    if (received.protocol != "") options.emplace_back("Reset Signal", [this]() { set_option(RESET); });
 
     if (bruceConfig.rfModule == CC1101_SPI_MODULE)
-        options.emplace_back("Range", [=]() { set_option(RANGE); });
+        options.emplace_back("Range", [this]() { set_option(RANGE); });
     if (bruceConfig.rfModule == CC1101_SPI_MODULE && !bruceConfig.rfFxdFreq)
-        options.emplace_back("Threshold", [=]() { set_option(THRESHOLD); });
+        options.emplace_back("Threshold", [this]() { set_option(THRESHOLD); });
 
     if (ReadRAW)
         options.emplace_back("Mode = RAW", [&]() {
@@ -276,8 +276,8 @@ void RFScan::select_menu_option() {
             return select_menu_option();
         });
 
-    options.emplace_back("Close Menu", [=]() { set_option(CLOSE_MENU); });
-    options.emplace_back("Main Menu", [=]() { set_option(MAIN_MENU); });
+    options.emplace_back("Close Menu", [this]() { set_option(CLOSE_MENU); });
+    options.emplace_back("Main Menu", [this]() { set_option(MAIN_MENU); });
 
     loopOptions(options);
 }

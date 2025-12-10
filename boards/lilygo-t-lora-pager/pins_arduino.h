@@ -168,11 +168,10 @@ static const uint8_t RX = SERIAL_RX;
 #define DEEPSLEEP_PIN_ACT LOW
 
 #define CAPS_LOCK 0x00
-#define SHIFT 0x1c
-#define KEY_LEFT_SHIFT 0x1c
+#define KEY_SHIFT 0x1c
 #define KEY_FN 0x14
-#define KEY_BACKSPACE 0x1d
-#define KEY_ENTER 0x13
+#define KEY_BACKSPACE 0x08
+#define KEY_ENTER 0x0D
 
 // Interrupt IO
 #define RTC_INT 1
@@ -191,6 +190,8 @@ static const uint8_t RX = SERIAL_RX;
 // TODO: Need to implement ES8311
 #define HAS_NS4168_SPKR
 #define HAS_ES8311
+#define ES8311_CODEC 1
+#define ES8311_ADDR 0x18
 #define BCLK 11
 #define WCLK 18
 #define DOUT 45
@@ -198,7 +199,7 @@ static const uint8_t RX = SERIAL_RX;
 
 // Mic
 // TODO: Need to implement ES8311
-#define PIN_WS 18
+#define PIN_BCLK 18
 #define PIN_CLK 11
 #define PIN_DATA 17
 
