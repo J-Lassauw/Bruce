@@ -1,6 +1,8 @@
 #include "ble_wof.h"
 #include "core/utils.h"
 
+#include <esp_mac.h>
+
 #define SCAN_TIME     10       // Scan duration in seconds
 #define SCAN_INTERVAL 100     // BLE scan interval
 #define SCAN_WINDOW   99      // BLE scan window
@@ -21,8 +23,8 @@ const std::vector<ForbiddenPacket> BLEWallOfFlipper::forbiddenPackets = {
     {"ff006db643ce97fe427c___________", "LOVE_TOYS"           }  // working
 };
 
-class BLEWallOfFlipper::WOFDeviceCallbacks : public NimBLEAdvertisedDeviceCallbacks {
-    void onResult(NimBLEAdvertisedDevice* advertisedDevice) override {
+class BLEWallOfFlipper::WOFDeviceCallbacks : public NimBLEScanCallbacks {
+    void onResult(const NimBLEAdvertisedDevice* advertisedDevice) override {
         String deviceColor = "Unknown";
         bool isValidMac = false;
         bool isFlipper = false;
@@ -85,7 +87,7 @@ class BLEWallOfFlipper::WOFDeviceCallbacks : public NimBLEAdvertisedDeviceCallba
 void BLEWallOfFlipper::ble_scan_setup() {
     BLEDevice::init("");
     pBLEScan = BLEDevice::getScan();
-    pBLEScan->setAdvertisedDeviceCallbacks(new WOFDeviceCallbacks());
+    pBLEScan->setScanCallbacks(new WOFDeviceCallbacks());
     // Active scan uses more power, but get results faster
     pBLEScan->setActiveScan(true);
     pBLEScan->setInterval(SCAN_INTERVAL);
@@ -130,7 +132,7 @@ void BLEWallOfFlipper::loop() {
         displayTextLine("Scanning...");
 
         // Perform a NimBLE-style scan
-        NimBLEScanResults results = pBLEScan->start(SCAN_TIME, false);
+        pBLEScan->start(SCAN_TIME, false);
         pBLEScan->stop();
         if (check(EscPress)) return;
 
