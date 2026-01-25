@@ -33,8 +33,8 @@ void _setup_gpio() {
 
     // Starts SPI instance for CC1101 and NRF24 with CS pins blocking communication at start
 
-    bruceConfig.rfModule = CC1101_SPI_MODULE;
-    bruceConfig.irRx = RXLED;
+    bruceConfigPins.rfModule = CC1101_SPI_MODULE;
+    bruceConfigPins.irRx = RXLED;
     // Wire.setPins(GROVE_SDA, GROVE_SCL);
     //  Wire.begin();
     bool pmu_ret = false;
@@ -64,7 +64,7 @@ int getBattery() {
     int voltage = PPM.getBattVoltage();
     int percent = (voltage - 3300) * 100 / (float)(4150 - 3350);
 
-    if (percent < 0) return 0;
+    if (percent < 0) return 1;
     if (percent > 100) percent = 100;
 
     if (PPM.isCharging() && percent >= 97) {
@@ -143,13 +143,17 @@ void powerOff() {
 ** Btn logic to tornoff the device (name is odd btw)
 **********************************************************************/
 void checkReboot() {
-    int countDown;
+    int countDown = 0;
     /* Long press power off */
     if (digitalRead(L_BTN) == BTN_ACT && digitalRead(R_BTN) == BTN_ACT) {
         uint32_t time_count = millis();
         while (digitalRead(L_BTN) == BTN_ACT && digitalRead(R_BTN) == BTN_ACT) {
             // Display poweroff bar only if holding button
             if (millis() - time_count > 500) {
+                if (countDown == 0) {
+                    int textWidth = tft.textWidth("PWR OFF IN 3/3", 1);
+                    tft.fillRect(tftWidth / 2 - textWidth / 2, 7, textWidth, 18, bruceConfig.bgColor);
+                }
                 tft.setTextSize(1);
                 tft.setTextColor(bruceConfig.priColor, bruceConfig.bgColor);
                 countDown = (millis() - time_count) / 1000 + 1;
@@ -167,6 +171,9 @@ void checkReboot() {
 
         // Clear text after releasing the button
         delay(30);
-        tft.fillRect(60, 12, tftWidth - 60, tft.fontHeight(1), bruceConfig.bgColor);
+        if (millis() - time_count > 500) {
+            tft.fillRect(60, 12, tftWidth - 60, tft.fontHeight(1), bruceConfig.bgColor);
+            drawStatusBar();
+        }
     }
 }

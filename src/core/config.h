@@ -5,22 +5,9 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <map>
+#include <precompiler_flags.h>
 #include <set>
 #include <vector>
-
-enum RFIDModules {
-    M5_RFID2_MODULE = 0,
-    PN532_I2C_MODULE = 1,
-    PN532_SPI_MODULE = 2,
-    RC522_SPI_MODULE = 3,
-    ST25R3916_SPI_MODULE = 4,
-    PN532_I2C_SPI_MODULE = 5
-};
-
-enum RFModules {
-    M5_RF_MODULE = 0,
-    CC1101_SPI_MODULE = 1,
-};
 
 enum EvilPortalPasswordMode { FULL_PASSWORD = 0, FIRST_LAST_CHAR = 1, HIDE_PASSWORD = 2, SAVE_LENGTH = 3 };
 
@@ -48,11 +35,13 @@ public:
 
     const char *filepath = "/bruce.conf";
 
-    // Settings
-    int rotation = ROTATION > 1 ? 3 : 1;
+    //  Settings
     int dimmerSet = 10;
     int bright = 100;
+    bool automaticTimeUpdateViaNTP = true;
     float tmz = 0;
+    bool dst = false;
+    bool clock24hr = true;
     int soundEnabled = 1;
     int soundVolume = 100;
     int wifiAtStartup = 0;
@@ -85,34 +74,12 @@ public:
         saveFile(); // opcional, para salvar imediatamente
     }
 
-    // BLE
-    String bleName = String("Keyboard_" + String((uint8_t)(ESP.getEfuseMac() >> 32), HEX));
-
-    // IR
-    int irTx = LED;
-    uint8_t irTxRepeats = 0;
-    int irRx = GROVE_SCL;
-
-    // RF
-    int rfTx = GROVE_SDA;
-    int rfRx = GROVE_SCL;
-    int rfModule = M5_RF_MODULE;
-    float rfFreq = 433.92;
-    int rfFxdFreq = 1;
-    int rfScanRange = 3;
-
-    // iButton Pin
-    int iButton = 0;
-
     // RFID
-    int rfidModule = M5_RFID2_MODULE;
     std::set<String> mifareKeys = {};
-
-    // GPS
-    int gpsBaudrate = 9600;
 
     // Misc
     String startupApp = "";
+    String startupAppJSInterpreterFile = "";
     String wigleBasicToken = "";
     int devMode = 0;
     int colorInverted = 1;
@@ -147,14 +114,15 @@ public:
     void setUiColor(uint16_t primary, uint16_t *secondary = nullptr, uint16_t *background = nullptr);
 
     // Settings
-    void setRotation(int value);
-    void validateRotationValue();
     void setDimmer(int value);
     void validateDimmerValue();
     void setBright(uint8_t value);
     void validateBrightValue();
+    void setAutomaticTimeUpdateViaNTP(bool value);
     void setTmz(float value);
     void validateTmzValue();
+    void setDST(bool value);
+    void setClock24Hr(bool value);
     void setSoundEnabled(int value);
     void setSoundVolume(int value);
     void validateSoundEnabledValue();
@@ -197,39 +165,13 @@ public:
     void validateEvilEndpointSsid();
     void validateEvilPasswordMode();
 
-    // BLE
-    void setBleName(const String name);
-
-    // IR
-    void setIrTxPin(int value);
-    void setIrTxRepeats(uint8_t value);
-    void setIrRxPin(int value);
-
-    // RF
-    void setRfTxPin(int value);
-    void setRfRxPin(int value);
-    void setRfModule(RFModules value);
-    void validateRfModuleValue();
-    void setRfFreq(float value, int fxdFreq = 2);
-    void setRfFxdFreq(float value);
-    void setRfScanRange(int value, int fxdFreq = 0);
-    void validateRfScanRangeValue();
-
-    // iButton
-    void setiButtonPin(int value);
-
     // RFID
-    void setRfidModule(RFIDModules value);
-    void validateRfidModuleValue();
     void addMifareKey(String value);
     void validateMifareKeysItems();
 
-    // GPS
-    void setGpsBaudrate(int value);
-    void validateGpsBaudrateValue();
-
     // Misc
     void setStartupApp(String value);
+    void setStartupAppJSInterpreterFile(String value);
     void setWigleBasicToken(String value);
     void setDevMode(int value);
     void validateDevModeValue();

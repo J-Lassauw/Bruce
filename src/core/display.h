@@ -109,7 +109,8 @@ void resetTftDisplay(
     uint16_t bg = bruceConfig.bgColor, uint16_t screen = bruceConfig.bgColor
 );
 void setTftDisplay(
-    int x = 0, int y = 0, uint16_t fc = tft.textcolor, int size = tft.textsize, uint16_t bg = tft.textbgcolor
+    int x = 0, int y = 0, uint16_t fc = tft.getTextColor(), int size = tft.getTextSize(),
+    uint16_t bg = tft.getTextBgColor()
 );
 
 void turnOffDisplay();
@@ -187,8 +188,6 @@ Opt_Coord listFiles(int index, std::vector<FileList> fileList);
 void drawWireguardStatus(int x, int y);
 
 void progressHandler(int progress, size_t total, String message = "Running, Wait");
-
-int getBattery() __attribute__((weak));
 
 bool __attribute__((weak)) isCharging();
 

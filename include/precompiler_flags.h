@@ -7,16 +7,16 @@
 
 #ifdef BOARD_HAS_PSRAM
 #ifndef SERIAL_CMDS_TASK_STACK_SIZE
-  #define SERIAL_CMDS_TASK_STACK_SIZE 20000
+  #define SERIAL_CMDS_TASK_STACK_SIZE 8192
 #endif
 #ifndef INTERPRETER_TASK_STACK_SIZE
-  #define INTERPRETER_TASK_STACK_SIZE 16384
+  #define INTERPRETER_TASK_STACK_SIZE 8192
 #endif
 #ifndef INPUT_HANDLER_TASK_STACK_SIZE
   #define INPUT_HANDLER_TASK_STACK_SIZE 4096
 #endif
 #ifndef SSH_TASK_STACK_SIZE
-  #define SSH_TASK_STACK_SIZE 20000
+  #define SSH_TASK_STACK_SIZE 1024*10
 #endif
 #ifndef SAFE_STACK_BUFFER_SIZE
   #define SAFE_STACK_BUFFER_SIZE 4096
@@ -24,10 +24,10 @@
 #else
 // Boards without PSRAM need smaller stack sizes to be able to run properly
 #ifndef SERIAL_CMDS_TASK_STACK_SIZE
-  #define SERIAL_CMDS_TASK_STACK_SIZE 1024*12
+  #define SERIAL_CMDS_TASK_STACK_SIZE 8192
 #endif
 #ifndef INTERPRETER_TASK_STACK_SIZE
-  #define INTERPRETER_TASK_STACK_SIZE 16384
+  #define INTERPRETER_TASK_STACK_SIZE 8192
 #endif
 #ifndef INPUT_HANDLER_TASK_STACK_SIZE
   #define INPUT_HANDLER_TASK_STACK_SIZE 2048
@@ -51,10 +51,10 @@
 #ifndef RXLED               // Default RX Infrared LED
   #define RXLED GROVE_SCL
 #endif
-#ifndef LED                 // Default TC Infrared Led
-  #define LED GROVE_SDA
+#ifndef TXLED                 // Default TX Infrared Led
+  #define TXLED GROVE_SDA
 #endif
-#ifndef LED_ON              // Infrared LED On state
+#ifndef LED_ON              // Infrared TXLED On state
   #define LED_ON 1
 #endif
 #ifndef LED_OFF             // Infrared LED Off state
@@ -75,8 +75,27 @@
 #ifndef	TFT_WIDTH
   #define TFT_WIDTH 240
 #endif
-#ifndef	TFT_HEIGHT
+#ifndef TFT_HEIGHT
   #define TFT_HEIGHT 135
+#endif
+
+#ifndef LORA_SCK
+  #define LORA_SCK -1
+#endif
+#ifndef LORA_MISO
+  #define LORA_MISO -1
+#endif
+#ifndef LORA_MOSI
+  #define LORA_MOSI -1
+#endif
+#ifndef LORA_CS
+  #define LORA_CS -1
+#endif
+#ifndef LORA_RST
+  #define LORA_RST -1
+#endif
+#ifndef LORA_DIO0
+  #define LORA_DIO0 -1
 #endif
 
 // Default initializers
@@ -207,10 +226,38 @@
 #define CC1101_GDO0_PIN -1
 #endif
 
+#ifndef W5500_SCK_PIN
+#define W5500_SCK_PIN -1
+#endif
+
+#ifndef W5500_MISO_PIN
+#define W5500_MISO_PIN -1
+#endif
+
+#ifndef W5500_MOSI_PIN
+#define W5500_MOSI_PIN -1
+#endif
+
+#ifndef W5500_SS_PIN
+#define W5500_SS_PIN -1
+#endif
+
+#ifndef W5500_INT_PIN
+#define W5500_INT_PIN -1
+#endif
+
+#ifndef W5500_RST_PIN
+#define W5500_RST_PIN -1
+#endif
+
 // Temporary, delete after finish Interfaces
 
 #ifndef SMOOTH_FONT
-#define SMOOTH_FONT
+#define SMOOTH_FONT 1
+#endif
+
+#ifndef BTN_ALIAS
+#define BTN_ALIAS "Sel"
 #endif
 
 #ifndef DEEPSLEEP_WAKEUP_PIN

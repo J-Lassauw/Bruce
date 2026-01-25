@@ -39,7 +39,7 @@
 
 #define IO_EXPANDER_PCA9555
 #define IO_EXP_GPS EXPANDS_GPS_EN
-// Main I2C Bus
+// Main SPI Bus
 #define SPI_SS_PIN 21
 #define SPI_MOSI_PIN 34
 #define SPI_MISO_PIN 33
@@ -113,6 +113,14 @@ static const uint8_t SCL = GROVE_SCL;
 #define W5500_MISO_PIN SPI_MISO_PIN
 #define W5500_INT_PIN 43
 
+// Lora setup pins
+#define LORA_SCK SPI_SCK_PIN
+#define LORA_MISO SPI_MISO_PIN
+#define LORA_MOSI SPI_MOSI_PIN
+#define LORA_CS 36
+#define LORA_RST 47
+#define LORA_DIO0 14
+
 // Serial
 #define SERIAL_TX 43
 #define SERIAL_RX 44
@@ -141,7 +149,7 @@ static const uint8_t RX = SERIAL_RX;
 #define BTN_ACT LOW
 
 // IR
-#define LED -1
+#define TXLED -1
 #define TXLED -1
 #define RXLED -1
 #define LED_ON HIGH
@@ -159,6 +167,13 @@ static const uint8_t RX = SERIAL_RX;
 // TODO:
 // #define PN532_RF_REST 45
 // #define PN532_IRQ 17
+
+// RTC
+#define HAS_RTC
+#define RTC_SDA GROVE_SDA
+#define RTC_SCL GROVE_SCL
+#define RTC_INTERRUPT_PIN 1
+#define HAS_RTC_PCF85063A
 
 // BadUSB
 #define USB_as_HID 1

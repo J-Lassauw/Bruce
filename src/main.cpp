@@ -6,6 +6,7 @@
 #include "core/utils.h"
 #include "esp32-hal-psram.h"
 #include "esp_task_wdt.h"
+#include "esp_wifi.h"
 #include <functional>
 #include <string>
 #include <vector>
@@ -18,9 +19,14 @@ USBSerial USBserial;
 SerialDevice *serialDevice = &USBserial;
 
 StartupApp startupApp;
+String startupAppJSInterpreterFile = "";
+
 MainMenu mainMenu;
 SPIClass sdcardSPI;
 #ifdef USE_HSPI_PORT
+#ifndef VSPI
+#define VSPI FSPI
+#endif
 SPIClass CC_NRF_SPI(VSPI);
 #else
 SPIClass CC_NRF_SPI(HSPI);
@@ -83,7 +89,7 @@ void __attribute__((weak)) taskInputHandler(void *parameter) {
 unsigned long previousMillis = millis();
 int prog_handler; // 0 - Flash, 1 - LittleFS, 3 - Download
 String cachedPassword = "";
-bool interpreter_start = false;
+int8_t interpreter_state = -1;
 bool sdcardMounted = false;
 bool gpsConnected = false;
 
@@ -98,11 +104,15 @@ bool returnToMenu;
 bool isSleeping = false;
 bool isScreenOff = false;
 bool dimmer = false;
-char timeStr[10];
+char timeStr[12];
 time_t localTime;
 struct tm *timeInfo;
 #if defined(HAS_RTC)
+#if defined(HAS_RTC_PCF85063A)
+pcf85063_RTC _rtc;
+#else
 cplus_RTC _rtc;
+#endif
 RTC_TimeTypeDef _time;
 RTC_DateTypeDef _date;
 bool clock_set = true;
@@ -115,8 +125,8 @@ std::vector<Option> options;
 // Protected global variables
 #if defined(HAS_SCREEN)
 tft_logger tft = tft_logger(); // Invoke custom library
-TFT_eSprite sprite = TFT_eSprite(&tft);
-TFT_eSprite draw = TFT_eSprite(&tft);
+tft_sprite sprite = tft_sprite(&tft);
+tft_sprite draw = tft_sprite(&tft);
 volatile int tftWidth = TFT_HEIGHT;
 #ifdef HAS_TOUCH
 volatile int tftHeight =
@@ -200,9 +210,9 @@ void setup_gpio() {
  **  Config tft
  *********************************************************************/
 void begin_tft() {
-    tft.setRotation(bruceConfig.rotation); // sometimes it misses the first command
+    tft.setRotation(bruceConfigPins.rotation); // sometimes it misses the first command
     tft.invertDisplay(bruceConfig.colorInverted);
-    tft.setRotation(bruceConfig.rotation);
+    tft.setRotation(bruceConfigPins.rotation);
     tftWidth = tft.width();
 #ifdef HAS_TOUCH
     tftHeight = tft.height() - 20;
@@ -327,9 +337,13 @@ void boot_screen_anim() {
  *********************************************************************/
 void init_clock() {
 #if defined(HAS_RTC)
-
     _rtc.begin();
+#if defined(HAS_RTC_BM8563)
     _rtc.GetBm8563Time();
+#endif
+#if defined(HAS_RTC_PCF85063A)
+    _rtc.GetPcf85063Time();
+#endif
     _rtc.GetTime(&_time);
 #endif
 }
@@ -394,11 +408,11 @@ void setup() {
     wifiConnected = false;
     BLEConnected = false;
     bruceConfig.bright = 100; // theres is no value yet
-    bruceConfig.rotation = ROTATION;
+    bruceConfigPins.rotation = ROTATION;
     setup_gpio();
 #if defined(HAS_SCREEN)
     tft.init();
-    tft.setRotation(bruceConfig.rotation);
+    tft.setRotation(bruceConfigPins.rotation);
     tft.fillScreen(TFT_BLACK);
     // bruceConfig is not read yet.. just to show something on screen due to long boot time
     tft.setTextColor(TFT_PURPLE, TFT_BLACK);
@@ -410,6 +424,22 @@ void setup() {
     begin_tft();
     init_clock();
     init_led();
+
+    options.reserve(20); // preallocate some options space to avoid fragmentation
+
+    // Set WiFi country to avoid warnings and ensure max power
+    const wifi_country_t country = {
+        .cc = "US",
+        .schan = 1,
+        .nchan = 14,
+#ifdef CONFIG_ESP_PHY_MAX_TX_POWER
+        .max_tx_power = CONFIG_ESP_PHY_MAX_TX_POWER, // 20
+#endif
+        .policy = WIFI_COUNTRY_POLICY_MANUAL
+    };
+
+    esp_wifi_set_max_tx_power(80); // 80 translates to 20dBm
+    esp_wifi_set_country(&country);
 
     // Some GPIO Settings (such as CYD's brightness control must be set after tft and sdcard)
     _post_setup_gpio();
@@ -445,7 +475,7 @@ void setup() {
     }
 #endif
     //  start a task to handle serial commands while the webui is running
-    startSerialCommandsHandlerTask();
+    startSerialCommandsHandlerTask(true);
 
     wakeUpScreen();
     if (bruceConfig.startupApp != "" && !startupApp.startApp(bruceConfig.startupApp)) {
@@ -459,25 +489,16 @@ void setup() {
  **********************************************************************/
 #if defined(HAS_SCREEN)
 void loop() {
-    // Interpreter must be ran in the loop() function, otherwise it breaks
-    // called by 'stack canary watchpoint triggered (loopTask)'
 #if !defined(LITE_VERSION) && !defined(DISABLE_INTERPRETER)
-    if (interpreter_start) {
-        TaskHandle_t interpreterTaskHandler = NULL;
+    if (interpreter_state > 0) {
         vTaskDelete(serialcmdsTaskHandle); // stop serial commands while in interpreter
         vTaskDelay(pdMS_TO_TICKS(10));
-        xTaskCreate(
-            interpreterHandler,          // Task function
-            "interpreterHandler",        // Task Name
-            INTERPRETER_TASK_STACK_SIZE, // Stack size
-            NULL,                        // Task parameters
-            2,                           // Task priority (0 to 3), loopTask has priority 2.
-            &interpreterTaskHandler      // Task handle
-        );
-
-        while (interpreter_start == true) { vTaskDelay(pdMS_TO_TICKS(500)); }
+        interpreter_state = 2;
+        Serial.println("Entering interpreter...");
+        while (interpreter_state > 0) { vTaskDelay(pdMS_TO_TICKS(500)); }
+        Serial.println("Exiting interpreter...");
+        if (interpreter_state == -1) { interpreterTaskHandler = NULL; }
         startSerialCommandsHandlerTask();
-        interpreter_start = false;
         previousMillis = millis(); // ensure that will not dim screen when get back to menu
     }
 #endif

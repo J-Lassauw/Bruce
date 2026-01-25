@@ -259,6 +259,11 @@ public:
     uint32_t textcolor = TFT_WHITE;
     uint32_t textbgcolor = TFT_BLACK;
 
+    uint32_t getTextColor() { return textcolor; };
+    uint32_t getTextBgColor() { return textbgcolor; };
+    uint8_t getTextSize() { return textsize; };
+    uint8_t getRotation() { return rotation; };
+
     void setWaitForAck(bool wait) { waitForAck = wait; }
 
     void setDelay(uint32_t delayMillis) {
@@ -859,7 +864,7 @@ public:
 
     int16_t getCursorY(void) { return cursor_y; }
 
-    void setTextWrap(bool w) { wrap = w; }
+    void setTextWrap(bool x, bool wrapY = false) { wrap = x; }
 
     int16_t drawRightString(const char *string, int32_t x, int32_t y, uint8_t font) {
         // TODO: add spaces
@@ -1184,7 +1189,8 @@ public:
             }
         }
         if (corners & 1) {
-            arc(cx, cy, r, TO_FP32(270), TO_FP32(180), false
+            arc(
+                cx, cy, r, TO_FP32(270), TO_FP32(180), false
             ); // drawing edges separately makes things fit better
             arc(cx, cy, r, TO_FP32(270), TO_FP32(180), true);
             arc(cx, cy + delta, r, TO_FP32(270), TO_FP32(180), false);

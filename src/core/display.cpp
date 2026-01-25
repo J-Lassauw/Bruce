@@ -21,6 +21,8 @@ void panelSleep(bool on) {
         delay(120);
     }
 #endif
+    // Disables tft writings on the display
+    tft.setSleepMode(on);
 }
 
 bool __attribute__((weak)) isCharging() { return false; }
@@ -42,7 +44,11 @@ void displayScrollingText(const String &text, Opt_Coord &coord) {
         String scrollingPart =
             displayText.substring(i, i + (coord.size - 1)); // Display charLimit characters at a time
         tft.fillRect(
-            coord.x, coord.y, (coord.size - 1) * LW * tft.textsize, LH * tft.textsize, bruceConfig.bgColor
+            coord.x,
+            coord.y,
+            (coord.size - 1) * LW * tft.getTextSize(),
+            LH * tft.getTextSize(),
+            bruceConfig.bgColor
         ); // Clear display area
         tft.setCursor(coord.x, coord.y);
         tft.setCursor(coord.x, coord.y);
@@ -88,6 +94,7 @@ void resetTftDisplay(int x, int y, uint16_t fc, int size, uint16_t bg, uint16_t 
     tft.fillScreen(screen);
     tft.setTextSize(size);
     tft.setTextColor(fc, bg);
+    tft.setTextDatum(0);
 }
 
 /***************************************************************************************
@@ -519,6 +526,15 @@ int loopOptions(
             displayScrollingText(txt, coord);
         }
 
+        // Checks ESC Press first, to not exit after PrevPress is processed
+        // PrevPress condition is a StickCPlus workaround, as it uses the same button for Prev and Esc
+        // Same happens to Core and some other boards
+        if (EscPress && PrevPress) EscPress = false;
+        if (menuType != MENU_TYPE_MAIN && check(EscPress)) {
+            index = -1;
+            break;
+        }
+
         if (PrevPress || check(UpPress)) {
             devModeCounter = 0;
 #ifdef HAS_KEYBOARD
@@ -587,30 +603,7 @@ int loopOptions(
         }
         // interpreter_start -> running the interpreter
         // interpreter -> loopOptions helper inside the Javascript
-        if (interpreter_start && !interpreter) { break; }
-
-#ifdef HAS_KEYBOARD
-        if (check(EscPress)) {
-            index = -1;
-            break;
-        }
-        /* DISABLED: may conflict with custom shortcuts
-        int pressed_number = checkNumberShortcutPress();
-        if (pressed_number >= 0) {
-            if (index == pressed_number) {
-                // press 2 times the same number to confirm
-                options[index].operation();
-                break;
-            }
-            // else only highlight the option
-            index = pressed_number;
-            if ((index + 1) > options.size()) index = options.size() - 1;
-            redraw = true;
-        }*/
-
-#elif defined(T_EMBED) || defined(HAS_TOUCH) || !defined(HAS_SCREEN)
-        if (menuType != MENU_TYPE_MAIN && check(EscPress)) break;
-#endif
+        if (interpreter_state > 0 && !interpreter) { break; }
     }
     return index;
 }
@@ -803,15 +796,13 @@ void drawStatusBar() {
     if (clock_set) {
         int clock_fontsize = 1; // Font size of the clock / BRUCE + BRUCE_VERSION
         setTftDisplay(12, 12, bruceConfig.priColor, clock_fontsize, bruceConfig.bgColor);
+        tft.fillRect(12, 12, 100, clock_fontsize * LH, bruceConfig.bgColor);
 #if defined(HAS_RTC)
-        _rtc.GetTime(&_time);
-        snprintf(timeStr, sizeof(timeStr), "%02d:%02d", _time.Hours, _time.Minutes);
-        tft.print(timeStr);
+        updateTimeStr(_rtc.getTimeStruct());
 #else
         updateTimeStr(rtc.getTimeStruct());
-        tft.fillRect(12, 12, 100, clock_fontsize * LH, bruceConfig.bgColor);
-        tft.print(timeStr);
 #endif
+        tft.print(timeStr);
     } else {
         setTftDisplay(12, 12, bruceConfig.priColor, 1, bruceConfig.bgColor);
         tft.print("BRUCE " + String(BRUCE_VERSION));
@@ -880,18 +871,8 @@ void printCenterFootnote(String text) {
 }
 
 /***************************************************************************************
-** Function name: getBattery()
-** Description:   Delivers the battery value from 1-100
-***************************************************************************************/
-int getBattery() {
-    int percent = 0;
-
-    return (percent < 0) ? 0 : (percent >= 100) ? 100 : percent;
-}
-
-/***************************************************************************************
 ** Function name: drawBatteryStatus()
-** Description:   Delivers the battery value from 1-100
+** Description:   Draws battery info into the Status bar
 ***************************************************************************************/
 void drawBatteryStatus(uint8_t bat) {
     if (bat == 0) return;
@@ -950,7 +931,7 @@ Opt_Coord listFiles(int index, std::vector<FileList> fileList) {
         start = index - MAX_ITEMS + 1;
         if (start < 0) start = 0;
     }
-    int nchars = (tftWidth - 20) / (6 * tft.textsize);
+    int nchars = (tftWidth - 20) / (6 * tft.getTextSize());
     String txt = ">";
     while (i < arraySize) {
         if (i >= start) {
@@ -1778,9 +1759,8 @@ bool drawPNG(FS &fs, String filename, int x, int y, bool center) {
     // Allocate decoder only while drawing, then release to keep RAM available for Wi-Fi/AP usage
 #if defined(ESP32)
     bool usedHeapCaps = true;
-    void *mem =
-        psramFound() ? heap_caps_malloc(sizeof(PNG), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
-                     : heap_caps_malloc(sizeof(PNG), MALLOC_CAP_8BIT);
+    void *mem = psramFound() ? heap_caps_malloc(sizeof(PNG), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
+                             : heap_caps_malloc(sizeof(PNG), MALLOC_CAP_8BIT);
     if (!mem) {
         mem = malloc(sizeof(PNG));
         usedHeapCaps = false;
@@ -1848,10 +1828,8 @@ bool drawPNG(FS &fs, String filename, int x, int y, bool center) {
     // Destroy placement-new object and free memory so RAM is available after rendering
     png->~PNG();
 #if defined(ESP32)
-    if (usedHeapCaps)
-        heap_caps_free(mem);
-    else
-        free(mem);
+    if (usedHeapCaps) heap_caps_free(mem);
+    else free(mem);
 #else
     free(mem);
 #endif
