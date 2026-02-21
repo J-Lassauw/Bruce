@@ -13,12 +13,33 @@
 #include "core/wifi/wifi_common.h"
 #include "current_year.h"
 #include "modules/ble/ble_common.h"
+#include <cctype>
 
 #define MAX_WAIT 5000
 
 #if __has_include(<NimBLEExtAdvertising.h>)
 #define NIMBLE_V2_PLUS 1
 #endif
+
+static bool parseMacToU64(const String &mac, uint64_t &out) {
+    uint64_t value = 0;
+    int nibbles = 0;
+    for (size_t i = 0; i < mac.length(); i++) {
+        char c = mac[i];
+        if (c == ':' || c == '-') continue;
+        if (!isxdigit(static_cast<unsigned char>(c))) return false;
+        value <<= 4;
+        if (c >= '0' && c <= '9') value |= static_cast<uint64_t>(c - '0');
+        else if (c >= 'a' && c <= 'f') value |= static_cast<uint64_t>(c - 'a' + 10);
+        else if (c >= 'A' && c <= 'F') value |= static_cast<uint64_t>(c - 'A' + 10);
+        else return false;
+        nibbles++;
+        if (nibbles > 12) return false;
+    }
+    if (nibbles != 12) return false;
+    out = value;
+    return true;
+}
 Wardriving::Wardriving(bool scanWiFi, bool scanBLE) {
     this->scanWiFi = scanWiFi;
     this->scanBLE = scanBLE;
@@ -34,6 +55,8 @@ Wardriving::~Wardriving() {
 }
 
 void Wardriving::setup() {
+    wifiNetworkCount = 0;
+    bluetoothDeviceCount = 0;
     ioExpander.turnPinOnOff(IO_EXP_GPS, HIGH);
 #ifdef USE_BOOST /// ENABLE 5V OUTPUT
     PPM.enableOTG();
@@ -45,6 +68,7 @@ void Wardriving::setup() {
     begin_wifi();
     if (!begin_gps()) return;
 
+    sessionStartMs = millis();
     vTaskDelay(500 / portTICK_PERIOD_MS);
     return loop();
 }
@@ -77,7 +101,16 @@ bool Wardriving::begin_gps() {
 }
 
 void Wardriving::end() {
-    wifiDisconnect();
+    if (scanWiFi) wifiDisconnect();
+    if (scanBLE) {
+#if defined(CONFIG_IDF_TARGET_ESP32C5)
+        esp_bt_controller_deinit();
+#else
+        BLEDevice::deinit(true);
+#endif
+        pBLEScan = nullptr;
+        bleInitialized = false;
+    }
 
     GPSserial.end();
     restorePins();
@@ -91,12 +124,17 @@ void Wardriving::loop() {
     while (1) {
         display_banner();
 
-        if (check(EscPress) || returnToMenu) return end();
-
         if (GPSserial.available() > 0) {
             count = 0;
             while (GPSserial.available() > 0) gps.encode(GPSserial.read());
-
+            String txt = "GPS Read: ";
+            // Debuging GPS messages
+            // while (GPSserial.available() > 0) {
+            //     char read = GPSserial.read();
+            //     txt += read;
+            //     gps.encode(read);
+            // }
+            // Serial.println(txt);
             if (gps.location.isUpdated()) {
                 padprintln("GPS location updated");
                 set_position();
@@ -117,9 +155,10 @@ void Wardriving::loop() {
             count++;
         }
 
-        int tmp = millis();
+        unsigned long tmp = millis();
         while (millis() - tmp < MAX_WAIT && !gps.location.isUpdated()) {
             if (check(EscPress) || returnToMenu) return end();
+            vTaskDelay(50 / portTICK_PERIOD_MS);
         }
     }
 }
@@ -138,15 +177,22 @@ void Wardriving::set_position() {
 void Wardriving::display_banner() {
     drawMainBorderWithTitle("Wardriving");
 
-    tft.println("");
-    if (filename != "") tft.println("File: " + filename.substring(0, filename.length() - 4));
-    tft.print("Found");
-    if (scanWiFi) tft.print(" WiFi: " + String(wifiNetworkCount));
-    if (scanBLE) tft.print(" BLE: " + String(bluetoothDeviceCount));
-    if (foundMACAddressCount) tft.print(" Alert: " + String(foundMACAddressCount));
+    padprintln("");
+    if (filename != "") padprintln("File: " + filename.substring(0, filename.length() - 4));
+    String txt = "Found";
+    if (scanWiFi) txt += " WiFi: " + String(wifiNetworkCount);
+    if (scanBLE) txt += " BLE: " + String(bluetoothDeviceCount);
+    padprint(txt);
+    if (foundMACAddressCount) padprint(" Alert: " + String(foundMACAddressCount));
 
-    tft.println("");
-    tft.printf("Distance: %.2fkm\n", distance / 1000);
+    padprintln("");
+    uint32_t elapsedMs = millis() - sessionStartMs;
+    uint32_t elapsedSeconds = elapsedMs / 1000;
+    uint32_t hours = elapsedSeconds / 3600;
+    uint32_t minutes = (elapsedSeconds / 60) % 60;
+    uint32_t seconds = elapsedSeconds % 60;
+    padprintf("Distance: %.2fkm  ET: %02lu:%02lu:%02lu\n", distance / 1000, hours, minutes, seconds);
+    // Serial.printf("Wardrive Elapsed Time: %02lu:%02lu:%02lu\n", hours, minutes, seconds);
 }
 
 void Wardriving::dump_gps_data() {
@@ -177,97 +223,232 @@ String Wardriving::auth_mode_to_string(wifi_auth_mode_t authMode) {
 }
 
 void Wardriving::scanWiFiBLE() {
-    padprintf(2, "Coord: %.6f, %.6f\n", gps.location.lat(), gps.location.lng());
+    FS *fs;
+    if (!getFsStorage(fs)) {
+        padprintln("Storage setup error");
+        displayError("Storage setup error", true);
+        returnToMenu = true;
+        return;
+    }
+
+    if (filename == "") create_filename();
+
+    if (!(*fs).exists("/BruceWardriving")) (*fs).mkdir("/BruceWardriving");
+
+    bool is_new_file = false;
+    if (!(*fs).exists("/BruceWardriving/" + filename)) is_new_file = true;
+    File file = (*fs).open("/BruceWardriving/" + filename, is_new_file ? FILE_WRITE : FILE_APPEND);
+
+    if (!file) {
+        padprintln("Failed to open file for writing");
+        displayError("Failed to open file for writing", true);
+        returnToMenu = true;
+        return;
+    }
+
+    if (is_new_file) {
+        file.println(
+            "WigleWifi-1.6,appRelease=v" + String(BRUCE_VERSION) + ",model=M5Stack GPS Unit,release=v" +
+            String(BRUCE_VERSION) +
+            ",device=ESP32 M5Stack,display=SPI TFT,board=ESP32 M5Stack,brand=Bruce,star=Sol,body=4,subBody=1"
+        );
+        file.println(
+            "MAC,SSID,AuthMode,FirstSeen,Channel,Frequency,RSSI,CurrentLatitude,CurrentLongitude,"
+            "AltitudeMeters,AccuracyMeters,RCOIs,MfgrId,Type"
+        );
+    }
+
+    padprintf("Coord: %.6f, %.6f\n", gps.location.lat(), gps.location.lng());
+    padprintln("Start Scanning...");
+
+    if (scanBLE && pBLEScan != nullptr && pBLEScan->isScanning()) {
+        pBLEScan->stop();
+        vTaskDelay(50 / portTICK_PERIOD_MS);
+    }
+
     int networksFound = scanWiFi ? scanWiFiNetworks() : 0;
-    int bleDevicesFound = scanBLE ? scanBLEDevices() : 0;
-    append_to_file(networksFound, bleDevicesFound);
-}
+    int bleFound = 0;
+    if (networksFound > 0) {
+        for (int i = 0; i < networksFound; i++) {
+            String macAddress = WiFi.BSSIDstr(i);
+            uint64_t macKey = 0;
+            bool macKeyOk = parseMacToU64(macAddress, macKey);
 
-int Wardriving::scanWiFiNetworks() {
-    tft.print("Scanning Wi-Fi...");
-    wifiConnected = true;
-    int network_amount = WiFi.scanNetworks();
-    if (network_amount == 0) {
-        tft.print(" Found: None");
-        return 0;
+            // Check if MAC was already found in this session
+            enforceRegisteredMACLimit();
+            if (!macKeyOk || registeredMACs.find(macKey) == registeredMACs.end()) {
+
+                if (macKeyOk) registeredMACs.insert(macKey); // Adds MAC to cache
+                int32_t channel = WiFi.channel(i);
+
+                char buffer[512];
+                snprintf(
+                    buffer,
+                    sizeof(buffer),
+                    "%s,\"%s\",[%s],%04d-%02d-%02d %02d:%02d:%02d,%ld,%ld,%ld,%f,%f,%f,%f,,,WIFI\n",
+                    macAddress.c_str(),
+                    WiFi.SSID(i).c_str(),
+                    auth_mode_to_string(WiFi.encryptionType(i)).c_str(),
+                    gps.date.year(),
+                    gps.date.month(),
+                    gps.date.day(),
+                    gps.time.hour(),
+                    gps.time.minute(),
+                    gps.time.second(),
+                    channel,
+                    channel != 14 ? 2407 + (channel * 5) : 2484,
+                    WiFi.RSSI(i),
+                    gps.location.lat(),
+                    gps.location.lng(),
+                    gps.altitude.meters(),
+                    gps.hdop.hdop() * 1.0
+                );
+                file.print(buffer);
+
+                // Check for alert
+                checkForAlert(macAddress, "WiFi", WiFi.SSID(i));
+
+                wifiNetworkCount++;
+            }
+
+            if ((i & 0x1F) == 0) vTaskDelay(1);
+        }
     }
-    tft.print(" Found: " + String(network_amount));
-    tft.println("");
-
-    return network_amount;
-}
-
-int Wardriving::scanBLEDevices() {
-    tft.print("Scanning BLE...");
-    ble_scan_setup();
-    BLEScanResults foundDevices;
-
-#ifdef NIMBLE_V2_PLUS
-    foundDevices = pBLEScan->getResults(scanTime * 1000, false);
-#else
-    foundDevices = pBLEScan->start(scanTime, false);
-#endif
-
-    int count = foundDevices.getCount();
-    if (count == 0) {
-        tft.print(" Found None");
-        pBLEScan->clearResults();
-        return 0;
+    // Free scan results from heap as soon as we finish consuming them
+    if (scanWiFi) {
+        WiFi.scanDelete();
+        vTaskDelay(120 / portTICK_PERIOD_MS);
     }
 
-    // Extract device data immediately while scan results are valid
-    bleDevices.clear();
-    for (int i = 0; i < count; i++) {
-        const NimBLEAdvertisedDevice *device = foundDevices.getDevice(i);
-        if (!device) continue;
+    if (scanBLE) {
+        if (!bleInitialized || pBLEScan == nullptr) {
+            if (!BLEDevice::init("")) {
+                Serial.println(" Failed to init BLE");
+                file.close();
+                vTaskDelay(500 / portTICK_PERIOD_MS);
+                return;
+            }
+            pBLEScan = BLEDevice::getScan();
+            pBLEScan->setActiveScan(true);
+            pBLEScan->setInterval(SCAN_INT);
+            pBLEScan->setWindow(SCAN_WINDOW);
+            bleInitialized = true;
+        }
+        if (pBLEScan->isScanning()) {
+            pBLEScan->stop();
+            vTaskDelay(50 / portTICK_PERIOD_MS);
+        }
 
-        BLEDeviceData deviceData;
+        BLEScanResults foundDevices;
 
-        // Extract data with error handling
-        try {
-            deviceData.address = device->getAddress().toString().c_str();
-            deviceData.rssi = device->getRSSI();
+        foundDevices = pBLEScan->getResults(scanTime * 1000, false);
 
-            deviceData.name = device->getName().c_str();
+        int count = foundDevices.getCount();
+        bleFound = count;
+        if (count == 0) {
+            pBLEScan->clearResults();
+            vTaskDelay(150 / portTICK_PERIOD_MS);
+            goto scan_summary;
+        }
 
-            deviceData.manufacturerId = 0;
+        // Bluetooth Rows
+        // [BD_ADDR],[Device Name],[Capabilities],[First timestamp seen],[Channel],[Frequency],
+        // [RSSI],[Latitude],[Longitude],[Altitude],[Accuracy],[RCOIs],[MfgrId],[Type]
+        // Example: 63:56:ac:c4:d4:30,,Misc [LE],2018-08-03 18:14:12,0,,
+        // -67,37.76090571,-122.44877987,104,49.3120002746582,,72,BLE
+
+        int deviceIndex = 0;
+        for (int i = 0; i < count; i++) {
+            const NimBLEAdvertisedDevice *device = foundDevices.getDevice(i);
+            if (!device) continue;
+
+            String address;
+            String name;
+            int rssi = 0;
+            uint16_t manufacturerId = 0;
 
             try {
-                // Check if device has manufacturer data before accessing it
+                address = device->getAddress().toString().c_str();
+                name = device->getName().c_str();
+                rssi = device->getRSSI();
+
                 if (device->haveManufacturerData()) {
                     std::string mfgData = device->getManufacturerData();
                     if (!mfgData.empty() && mfgData.length() >= 2) {
-                        // Extract manufacturer ID from first 2 bytes (little endian)
-                        deviceData.manufacturerId = (uint16_t(mfgData[1]) << 8) | uint16_t(mfgData[0]);
+                        manufacturerId = (uint16_t(mfgData[1]) << 8) | uint16_t(mfgData[0]);
                     }
                 }
-            } catch (const std::exception &e) {
-                // Serial.printf(
-                //     "Exception extracting manufacturer data for device %s: %s\n",
-                //     deviceData.address.c_str(),
-                //     e.what()
-                // );
-                deviceData.manufacturerId = 0;
-            } catch (...) {
-                // Serial.printf(
-                //     "Unknown error extracting manufacturer data for device %s\n",
-                //     deviceData.address.c_str()
-                // );
-                deviceData.manufacturerId = 0;
+            } catch (...) { continue; }
+
+            // Check if MAC was already found in this session
+            enforceRegisteredMACLimit();
+            uint64_t macKey = 0;
+            bool macKeyOk = parseMacToU64(address, macKey);
+            if (!macKeyOk || registeredMACs.find(macKey) == registeredMACs.end()) {
+                if (macKeyOk) registeredMACs.insert(macKey); // Adds MAC to cache
+
+                char buffer[512];
+                char manufacturerIdStr[8] = "";
+                if (manufacturerId != 0) {
+                    snprintf(manufacturerIdStr, sizeof(manufacturerIdStr), "%04X", manufacturerId);
+                }
+                snprintf(
+                    buffer,
+                    sizeof(buffer),
+                    "%s,\"%s\",Misc [BLE],%04d-%02d-%02d %02d:%02d:%02d,0,,%d,%f,%f,%f,%f,,%s,BLE\n",
+                    address.c_str(),
+                    name.c_str(),
+                    gps.date.year(),
+                    gps.date.month(),
+                    gps.date.day(),
+                    gps.time.hour(),
+                    gps.time.minute(),
+                    gps.time.second(),
+                    rssi,
+                    gps.location.lat(),
+                    gps.location.lng(),
+                    gps.altitude.meters(),
+                    gps.hdop.hdop() * 1.0,
+                    manufacturerIdStr
+                );
+                file.print(buffer);
+
+                // Check for alert
+                checkForAlert(address, "BLE", name);
+
+                bluetoothDeviceCount++;
             }
 
-            bleDevices.push_back(deviceData);
-        } catch (...) {
-            // Serial.printf("Error extracting data for BLE device %d, skipping\n", i);
-            continue;
+            if ((deviceIndex++ & 0x1F) == 0) vTaskDelay(1);
         }
+
+        pBLEScan->clearResults();
+        vTaskDelay(20 / portTICK_PERIOD_MS);
     }
 
-    pBLEScan->clearResults();
-    tft.print(" Found: " + String(bleDevices.size()));
-    tft.println("");
+scan_summary:
+    if (scanWiFi || scanBLE) {
+        String summary = "Scan done.";
+        if (scanWiFi) summary += " WiFi: " + String(networksFound);
+        if (scanBLE) summary += " BLE: " + String(bleFound);
+        padprintln(summary);
+    }
 
-    return bleDevices.size();
+    file.close();
+}
+
+void Wardriving::enforceRegisteredMACLimit() {
+    if (registeredMACs.size() < MAX_REGISTERED_MACS) return;
+
+    registeredMACs.clear();
+    macCacheClears++;
+    padprintln("MAC cache cleared to prevent heap overflow");
+}
+
+int Wardriving::scanWiFiNetworks() {
+    wifiConnected = true;
+    int network_amount = WiFi.scanNetworks();
+    return network_amount;
 }
 
 void Wardriving::loadAlertMACs() {
@@ -317,139 +498,6 @@ void Wardriving::create_filename() {
         gps.time.second() % 100
     );
     filename = String(timestamp) + "_wardriving.csv";
-}
-
-void Wardriving::append_to_file(int network_amount, int bluetooth_amount) {
-    FS *fs;
-    if (!getFsStorage(fs)) {
-        padprintln("Storage setup error");
-        returnToMenu = true;
-        return;
-    }
-
-    if (filename == "") create_filename();
-
-    if (!(*fs).exists("/BruceWardriving")) (*fs).mkdir("/BruceWardriving");
-
-    bool is_new_file = false;
-    if (!(*fs).exists("/BruceWardriving/" + filename)) is_new_file = true;
-    File file = (*fs).open("/BruceWardriving/" + filename, is_new_file ? FILE_WRITE : FILE_APPEND);
-
-    if (!file) {
-        padprintln("Failed to open file for writing");
-        returnToMenu = true;
-        return;
-    }
-
-    if (is_new_file) {
-        file.println(
-            "WigleWifi-1.6,appRelease=v" + String(BRUCE_VERSION) + ",model=M5Stack GPS Unit,release=v" +
-            String(BRUCE_VERSION) +
-            ",device=ESP32 M5Stack,display=SPI TFT,board=ESP32 M5Stack,brand=Bruce,star=Sol,body=4,subBody=1"
-        );
-        file.println(
-            "MAC,SSID,AuthMode,FirstSeen,Channel,Frequency,RSSI,CurrentLatitude,CurrentLongitude,"
-            "AltitudeMeters,AccuracyMeters,RCOIs,MfgrId,Type"
-        );
-    }
-
-    // WiFi Rows
-    // [BSSID],[SSID],[Capabilities],[First timestamp seen],[Channel],[Frequency],
-    // [RSSI],[Latitude],[Longitude],[Altitude],[Accuracy],[RCOIs],[MfgrId],[Type]
-    // Example: 1a:9f:ee:5c:71:c6,Scampoodle,[WPA2-EAP-CCMP][ESS],2018-08-01 13:08:27,161,5805,
-    // -43,37.76578028,-123.45919439,67,3.2160000801086426,5A03BA0000 BAA2D00000 BAA2D02000,,WIFI
-
-    for (int i = 0; i < network_amount; i++) {
-        String macAddress = WiFi.BSSIDstr(i);
-
-        // Check if MAC was already found in this session
-        if (registeredMACs.find(macAddress) == registeredMACs.end()) {
-
-            registeredMACs.insert(macAddress); // Adds MAC to file
-            int32_t channel = WiFi.channel(i);
-
-            char buffer[512];
-            snprintf(
-                buffer,
-                sizeof(buffer),
-                "%s,\"%s\",[%s],%04d-%02d-%02d %02d:%02d:%02d,%ld,%ld,%ld,%f,%f,%f,%f,,,WIFI\n",
-                macAddress.c_str(),
-                WiFi.SSID(i).c_str(),
-                auth_mode_to_string(WiFi.encryptionType(i)).c_str(),
-                gps.date.year(),
-                gps.date.month(),
-                gps.date.day(),
-                gps.time.hour(),
-                gps.time.minute(),
-                gps.time.second(),
-                channel,
-                channel != 14 ? 2407 + (channel * 5) : 2484,
-                WiFi.RSSI(i),
-                gps.location.lat(),
-                gps.location.lng(),
-                gps.altitude.meters(),
-                gps.hdop.hdop() * 1.0
-            );
-            file.print(buffer);
-
-            // Check for alert
-            checkForAlert(macAddress, "WiFi", WiFi.SSID(i));
-
-            wifiNetworkCount++;
-        }
-    }
-
-    // Bluetooth Rows
-    // [BD_ADDR],[Device Name],[Capabilities],[First timestamp seen],[Channel],[Frequency],
-    // [RSSI],[Latitude],[Longitude],[Altitude],[Accuracy],[RCOIs],[MfgrId],[Type]
-    // Example: 63:56:ac:c4:d4:30,,Misc [LE],2018-08-03 18:14:12,0,,
-    // -67,37.76090571,-122.44877987,104,49.3120002746582,,72,BLE
-
-    for (const auto &device : bleDevices) {
-        Serial.printf(
-            "Processing BLE device: %s, Name: %s, RSSI: %d\n",
-            device.address.c_str(),
-            device.name.c_str(),
-            device.rssi
-        );
-
-        // Check if MAC was already found in this session
-        if (registeredMACs.find(device.address) == registeredMACs.end()) {
-            registeredMACs.insert(device.address); // Adds MAC to file
-
-            char buffer[512];
-            char manufacturerIdStr[8] = "";
-            if (device.manufacturerId != 0) {
-                snprintf(manufacturerIdStr, sizeof(manufacturerIdStr), "%04X", device.manufacturerId);
-            }
-            snprintf(
-                buffer,
-                sizeof(buffer),
-                "%s,\"%s\",Misc [BLE],%04d-%02d-%02d %02d:%02d:%02d,0,,%d,%f,%f,%f,%f,,%s,BLE\n",
-                device.address.c_str(),
-                device.name.c_str(),
-                gps.date.year(),
-                gps.date.month(),
-                gps.date.day(),
-                gps.time.hour(),
-                gps.time.minute(),
-                gps.time.second(),
-                device.rssi,
-                gps.location.lat(),
-                gps.location.lng(),
-                gps.altitude.meters(),
-                gps.hdop.hdop() * 1.0,
-                manufacturerIdStr
-            );
-            file.print(buffer);
-
-            // Check for alert
-            checkForAlert(device.address, "BLE", device.name);
-
-            bluetoothDeviceCount++;
-        }
-    }
-    file.close();
 }
 
 void Wardriving::releasePins() {
